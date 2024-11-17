@@ -1,0 +1,126 @@
+package tcp7;
+
+import java.io.InputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+
+public class IPv6TunnelServerTCP {
+
+    private static final int IPV4_HEADER_LENGTH = 20;
+    private static final int IPV6_HEADER_LENGTH = 40;
+
+    public static void main(String[] args) {
+        int serverPort = 9999;
+
+        try (ServerSocket serverSocket = new ServerSocket(serverPort)) {
+            System.out.println("Server listening on port " + serverPort);
+
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                new Thread(new PacketHandler(clientSocket)).start();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // Handles the incoming packets in a separate thread
+    static class PacketHandler implements Runnable {
+        private final Socket clientSocket;
+
+        public PacketHandler(Socket clientSocket) {
+            this.clientSocket = clientSocket;
+        }
+
+        @Override
+        public void run() {
+            try (InputStream inputStream = clientSocket.getInputStream()) {
+                byte[] ipv4Packet = inputStream.readAllBytes();
+
+                // Extract the IPv6 packet from the IPv4 encapsulation
+                byte[] ipv6Packet = Arrays.copyOfRange(ipv4Packet, IPV4_HEADER_LENGTH, ipv4Packet.length);
+
+                // Extract QoS fields and payload data from the IPv6 packet
+                ByteBuffer ipv6Buffer = ByteBuffer.wrap(ipv6Packet);
+                int versionTrafficClassFlowLabel = ipv6Buffer.getInt();
+                short payloadLength = ipv6Buffer.getShort();
+                byte nextHeader = ipv6Buffer.get();
+                byte hopLimit = ipv6Buffer.get();
+                byte[] srcIPv6 = new byte[16];
+                byte[] destIPv6 = new byte[16];
+                ipv6Buffer.get(srcIPv6);
+                ipv6Buffer.get(destIPv6);
+
+                // Extract QoS data (priority, reliability, latency) from the payload
+                byte[] qosFields = new byte[3];
+                ipv6Buffer.get(qosFields);
+
+                byte priority = qosFields[0];
+                byte reliability = qosFields[1];
+                byte latency = qosFields[2];
+
+                // Extract the payload message
+                byte[] messageData = new byte[ipv6Buffer.remaining()];
+                ipv6Buffer.get(messageData);
+                String message = new String(messageData, StandardCharsets.UTF_8);
+
+                // Log the details of the received packet and QoS settings
+                System.out.println("Received IPv6 packet encapsulated in IPv4:");
+                System.out.println("Source IPv6: " + bytesToHex(srcIPv6));
+                System.out.println("Destination IPv6: " + bytesToHex(destIPv6));
+                System.out.println("Custom QoS - Priority: " + priority + ", Reliability: " + reliability + ", Latency: " + latency);
+                System.out.println("Message: " + message);
+
+                // Simulate latency based on QoS and packet size
+                long simulatedLatency = calculateLatencyBasedOnSize(message.length(), latency);
+                System.out.println("Simulating " + simulatedLatency + " ms latency.");
+
+                // Simulate packet processing delay
+                Thread.sleep(simulatedLatency);
+
+                // After processing, print results
+                System.out.println("Packet processing completed. Simulated latency: " + simulatedLatency + " ms.\n");
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        // Function to calculate simulated latency based on the packet size and QoS latency field
+        private static long calculateLatencyBasedOnSize(int messageSize, byte qosLatency) {
+            // Base latency from QoS setting
+            long latency = qosLatency * 2; // Each unit of latency increases by 2 ms
+
+            // Add delay based on message size (simple formula, you can adjust as needed)
+            if (messageSize < 50) {
+                latency += 5; // Small packets (less than 50 bytes) add a small overhead
+            } else if (messageSize < 100) {
+                latency += 10; // Medium packets (50-100 bytes) add a medium overhead
+            } else {
+                latency += 15; // Larger packets (>100 bytes) add more overhead
+            }
+
+            return latency;
+        }
+
+        // Convert byte array to hexadecimal string for easier IPv6 address display
+        private static String bytesToHex(byte[] bytes) {
+            StringBuilder hexString = new StringBuilder();
+            for (int i = 0; i < bytes.length; i++) {
+                String hex = Integer.toHexString(0xff & bytes[i]);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+                if (i % 2 == 1 && i != bytes.length - 1) {
+                    hexString.append(':');
+                }
+            }
+            return hexString.toString();
+        }
+    }
+}
+
